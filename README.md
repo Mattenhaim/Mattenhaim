@@ -27,7 +27,11 @@
 ### 一点一滴 · Contribution trail
 
 <!-- CONTRIBUTIONS:START -->
-贡献轨迹会在主页仓库首次运行动画工作流后展示。
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/snake-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="assets/snake.svg" />
+  <img alt="Mattenhaim 的 GitHub 贡献贪吃蛇动画" src="assets/snake.svg" width="100%" />
+</picture>
 <!-- CONTRIBUTIONS:END -->
 
 <p align="center"><sub>Small steps. Thoughtful work. Keep going.</sub></p>
