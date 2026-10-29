@@ -1,0 +1,70 @@
+name: Update contribution snake
+
+on:
+  schedule:
+    - cron: '23 1 * * *' # 每天北京时间 09:23，GitHub 调度可能延迟
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/contributions.yml'
+      - 'README.md'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: contribution-snake
+  cancel-in-progress: false
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Generate light and dark animations
+        uses: Platane/snk/svg-only@d8f6715049803e982ee5ff501b6b9b7d5deeb09b # v3.5.0
+        with:
+          github_user_name: ${{ github.repository_owner }}
+          outputs: |
+            dist/snake.svg?color_snake=#087f75&color_dots=#ebedf0,#c9ede6,#92daca,#4bbca5,#087f75
+            dist/snake-dark.svg?palette=github-dark&color_snake=#67e8d0&color_dots=#161b22,#173d43,#246973,#3fa39f,#67e8d0
+      - name: Publish generated SVGs and update README atomically
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # GitHub REST API via the runner's preinstalled gh CLI; retry on concurrent edits.
+          for attempt in 1 2 3; do
+            head=$(gh api "repos/$GH_REPO/git/ref/heads/main" --jq '.object.sha')
+            base_tree=$(gh api "repos/$GH_REPO/git/commits/$head" --jq '.tree.sha')
+            gh api "repos/$GH_REPO/contents/README.md?ref=$head" --jq '.content' | base64 --decode > current-readme.md
+            python3 - <<'PY'
+          import json, os, pathlib, re
+          content = pathlib.Path('current-readme.md').read_text()
+          block = '''<!-- CONTRIBUTIONS:START -->
+          <picture>
+            <source media="(prefers-color-scheme: dark)" srcset="assets/snake-dark.svg" />
+            <source media="(prefers-color-scheme: light)" srcset="assets/snake.svg" />
+            <img alt="Mattenhaim 的 GitHub 贡献贪吃蛇动画" src="assets/snake.svg" width="100%" />
+          </picture>
+          <!-- CONTRIBUTIONS:END -->'''
+          updated, count = re.subn(r'<!-- CONTRIBUTIONS:START -->.*?<!-- CONTRIBUTIONS:END -->', lambda _: block, content, flags=re.S)
+          if count != 1:
+              raise SystemExit('Expected exactly one contributions marker pair')
+          entries = [{'path': 'README.md', 'mode': '100644', 'type': 'blob', 'content': updated}]
+          for name in ('snake.svg', 'snake-dark.svg'):
+              entries.append({'path': 'assets/' + name, 'mode': '100644', 'type': 'blob', 'content': pathlib.Path('dist', name).read_text()})
+          pathlib.Path('entries.json').write_text(json.dumps(entries))
+          PY
+            jq --arg base "$base_tree" '{base_tree:$base,tree:.}' entries.json > tree.json
+            tree=$(gh api --method POST "repos/$GH_REPO/git/trees" --input tree.json --jq '.sha')
+            commit=$(gh api --method POST "repos/$GH_REPO/git/commits" -f message='chore: refresh contribution animation [skip ci]' -f tree="$tree" -f "parents[]=$head" --jq '.sha')
+            if gh api --method PATCH "repos/$GH_REPO/git/refs/heads/main" -f sha="$commit" -F force=false; then
+              exit 0
+            fi
+          done
+          echo 'Branch changed repeatedly; rerun this workflow.' >&2
+          exit 1
